@@ -1,0 +1,121 @@
+== table listing all the nodes EXTERIOR in the polygons
+CREATE SEQUENCE coordlist START 1;
+create table coords as
+	SELECT nextval('coordlist'), a.globalid, b.n,a.path,
+  	  st_x(st_pointn(st_exteriorring(a.geom),b.n)) AS x,
+  	  st_y(st_pointn(st_exteriorring(a.geom),b.n)) AS y,
+  	  st_z(st_pointn(st_exteriorring(a.geom),b.n)) as z
+  	FROM 
+(SELECT c.globalid, (c.p_geom).path[1] As path, (c.p_geom).geom
+  FROM (SELECT globalid, ST_Dump(geom) as p_geom from  "IfcWallStandardCase") AS c
+  where GeometryType((c.p_geom).geom) = 'POLYGON')
+  	 AS a, public.num_seq AS b
+  	WHERE b.n <= st_npoints(st_exteriorring(a.geom))
+ORDER BY a.globalid, a.path, b.n;
+
+== table listing distinct nodes
+CREATE SEQUENCE nodeids START 1;
+	create table nodes as 
+	select nextval('nodeids') as id,x,y,z from
+	(SELECT  distinct
+  	  st_x(st_pointn(st_exteriorring(a.geom),b.n)) AS x,
+  	  st_y(st_pointn(st_exteriorring(a.geom),b.n)) AS y,
+  	  st_z(st_pointn(st_exteriorring(a.geom),b.n)) as z
+  	FROM 
+(SELECT  (c.p_geom).geom
+  FROM (SELECT  ST_Dump(geom) as p_geom from  "IfcWallStandardCase") AS c
+  where GeometryType((c.p_geom).geom) = 'POLYGON')
+  	 AS a, public.num_seq AS b
+  	WHERE b.n <= st_npoints(st_exteriorring(a.geom))) f;
+
+== now create the node/face table
+
+create sequence nodefaceids start 1;
+
+create table nodeface as
+select nextval('nodefaceids') as id, a.id as nodeid, b.id as coordsid, b.n as nodeorder, b.globalid as globalid, b.path as faceid
+from nodes a inner join coords b
+on (a.x = b.x and a.y = b.y and a.z = b.z);
+
+
+== now create the triangles
+== can't use delaunay as it won't handle the vertical faces! 
+== so check for vertical using a normal calculation and then if vertical project into horizontal by removing y coords 
+== then reproject upwards
+== use delaunay where it works?
+
+create sequence faceids start 1;
+create table trianglepolys as 
+select nextval('faceids') as id, geom, st_DelaunayTriangles(st_convexhull(st_forcerhr(geom))) as triangles, globalid from 
+    (SELECT c.globalid, (c.p_geom).path[1] As path, st_astext((c.p_geom).geom) as wkt, st_makevalid((c.p_geom).geom) as geom, st_npoints((c.p_geom).geom) as npoints, GeometryType(ST_Envelope((c.p_geom).geom)) as polyarea
+      FROM (SELECT globalid, ST_Dump(geom) as p_geom from  "IfcWallStandardCase") AS c
+      where GeometryType((c.p_geom).geom) = 'POLYGON') x
+    where  x.npoints > 3
+  and GeometryType(geom) <> 'LINESTRING'
+  order by triangles, globalid;
+
+== THE POLYGONS THAT DIDN'T TRIANGULATE!
+SELECT a.polyid, a.globalid, b.n,
+  	  st_x(st_pointn(st_exteriorring(a.geom),b.n)) AS x,
+  	  st_y(st_pointn(st_exteriorring(a.geom),b.n)) AS y,
+  	  st_z(st_pointn(st_exteriorring(a.geom),b.n)) as z
+  	FROM 
+(SELECT globalid,  geom, nextval('coordlist') as polyid
+  FROM  trianglepolys where st_astext(triangles) = 'GEOMETRYCOLLECTION EMPTY') AS a, public.num_seq AS b
+  	WHERE b.n <= st_npoints(st_exteriorring(a.geom)) 
+  	and GeometryType(geom) = 'POLYGON'
+ORDER BY globalid, polyid, n;
+
+
+
+
+== now create the node/triangle table
+
+
+
+
+-- create a table to hold a list of layers to display for each project
+create table projectMetadata 
+(id serial, projectName varchar(250), tableName varchar(250));
+
+
+
+
+==============
+==============
+
+rubbish
+
+	SELECT a.globalid, b.n,
+  	  st_x(st_pointn(st_exteriorring(a.geom),b.n)) AS x,
+  	  st_y(st_pointn(st_exteriorring(a.geom),b.n)) AS y,
+  	  st_z(st_pointn(st_exteriorring(a.geom),b.n)) as z
+  	FROM 
+(SELECT c.globalid, (c.p_geom).geom
+  FROM (SELECT globalid, ST_Dump(geom) as p_geom from  trianglepolys) AS c
+  where GeometryType((c.p_geom).geom) = 'POLYGON')
+  	 AS a, public.num_seq AS b
+  	WHERE b.n <= st_npoints(st_exteriorring(a.geom))
+ORDER BY a.globalid, b.n;
+
+SELECT nextval('coordlist'), a.globalid, b.n
+  	  st_x(st_pointn(st_exteriorring(a.geom),b.n)) AS x,
+  	  st_y(st_pointn(st_exteriorring(a.geom),b.n)) AS y,
+  	  st_z(st_pointn(st_exteriorring(a.geom),b.n)) as z
+  	FROM 
+(SELECT c.globalid,  geom
+  FROM  "trianglepolys") AS a, public.num_seq AS b
+  	WHERE b.n <= st_npoints(st_exteriorring(a.geom))
+ORDER BY a.globalid, b.n;
+	
+	SELECT nextval('coordlist'), a.globalid, b.n,a.path,
+  	  st_x(st_pointn(st_exteriorring(a.geom),b.n)) AS x,
+  	  st_y(st_pointn(st_exteriorring(a.geom),b.n)) AS y,
+  	  st_z(st_pointn(st_exteriorring(a.geom),b.n)) as z
+  	FROM 
+(SELECT c.globalid, (c.p_geom).path[1] As path, (c.p_geom).geom
+  FROM (SELECT globalid, ST_Dump(geom) as p_geom from  "IfcWallStandardCase") AS c
+  where GeometryType((c.p_geom).geom) = 'POLYGON')
+  	 AS a, public.num_seq AS b
+  	WHERE b.n <= st_npoints(st_exteriorring(a.geom))
+ORDER BY a.globalid, a.path, b.n;
